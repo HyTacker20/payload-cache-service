@@ -1,6 +1,6 @@
 from typing import Self
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class PayloadInput(BaseModel):
@@ -33,6 +33,8 @@ class PayloadOutput(BaseModel):
 
 
 class PayloadConfirmation(BaseModel):
-    id: str
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    id: str = Field(pattern=r"^[0-9a-f]{64}$")
     created: bool
     message: str
