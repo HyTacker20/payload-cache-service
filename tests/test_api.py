@@ -1,9 +1,11 @@
+import json
 from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
 from cache_service.api import create_app
@@ -152,3 +154,49 @@ def test_app_restart_preserves_payload_and_cache(tmp_path: Path) -> None:
 def test_settings_accept_environment(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("CACHE_DATA_DIR", str(tmp_path))
     assert Settings().data_dir == tmp_path
+
+
+@pytest.mark.parametrize("content_type", ["application/octet-stream", "text/plain"])
+def test_binary_request_returns_validation_error(client, content_type) -> None:
+    http, transformer = client
+    response = http.post(
+        "/payload", content=b"\xff", headers={"Content-Type": content_type}
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["loc"] == ["body"]
+    transformer.assert_not_called()
+
+
+@pytest.mark.parametrize("value", ["NaN", "Infinity", "-Infinity"])
+def test_rejected_nonfinite_numbers_have_standard_json_errors(client, value) -> None:
+    http, transformer = client
+    response = http.post(
+        "/payload",
+        content=f'{{"list_1":[{value}],"list_2":["a"]}}',
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 422
+
+    def reject_constant(token: str) -> None:
+        pytest.fail(f"invalid JSON constant in response: {token}")
+
+    detail = json.loads(response.text, parse_constant=reject_constant)["detail"]
+    assert detail[0]["loc"] == ["body", "list_1", 0]
+    transformer.assert_not_called()
+
+
+def test_database_error_logs_do_not_disclose_input_values(client, caplog) -> None:
+    http, _ = client
+    with http.app.state.service.engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TRIGGER reject_insert BEFORE INSERT ON transformations "
+                "BEGIN SELECT RAISE(FAIL, 'storage failure'); END"
+            )
+        )
+    response = http.post(
+        "/payload", json={"list_1": ["private-input-value"], "list_2": ["other"]}
+    )
+    assert response.status_code == 503
+    assert "private-input-value" not in caplog.text
+    assert "PRIVATE-INPUT-VALUE" not in caplog.text

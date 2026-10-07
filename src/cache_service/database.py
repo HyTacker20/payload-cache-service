@@ -28,6 +28,7 @@ def create_database(directory: Path) -> Engine:
     directory.mkdir(parents=True, exist_ok=True)
     engine = create_engine(
         URL.create("sqlite+pysqlite", database=str(directory / "cache.sqlite3")),
+        hide_parameters=True,
         connect_args={
             "check_same_thread": False,
             "timeout": 30,

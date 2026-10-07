@@ -5,7 +5,6 @@ from contextlib import asynccontextmanager
 from typing import Annotated, cast
 
 from fastapi import Depends, FastAPI, HTTPException, Path, Request, Response
-from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
@@ -51,10 +50,13 @@ def create_app(
     async def validation_error(
         request: Request, error: RequestValidationError
     ) -> Response:
-        # Invalid Unicode may also occur in error inputs or field names.
-        content = json.dumps(
-            {"detail": jsonable_encoder(error.errors())}, ensure_ascii=True
-        )
+        # Arbitrary inputs can contain binary data, non-finite numbers, or invalid
+        # Unicode. Return useful error locations without reflecting those values.
+        details = [
+            {key: detail[key] for key in ("type", "loc", "msg")}
+            for detail in error.errors()
+        ]
+        content = json.dumps({"detail": details}, ensure_ascii=True, allow_nan=False)
         return Response(content, status_code=422, media_type="application/json")
 
     @app.exception_handler(TransformationError)
