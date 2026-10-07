@@ -220,7 +220,8 @@ contract; `generation.py` contains the transformer and interleaving;
   element boundaries that produce the same string intentionally share an ID.
 - Validation responses include error type, location, and message without
   reflecting rejected values. Database error logging hides bound SQL parameters.
-- Schema creation uses SQLAlchemy `create_all` for this initial schema. Future
+- Schema creation uses SQLAlchemy `create_all` inside `BEGIN IMMEDIATE`, so
+  simultaneous first starts serialize their table checks and creation. Future
   schema changes would need migrations. No cache expiry or background cleanup is
   implemented; data grows with distinct strings and outputs.
 
@@ -239,8 +240,8 @@ transformer and remote HTTP responses are replaced where necessary.
 - Generation tests cover order, Unicode, whitespace, empty input, and validation.
 - Service tests count transformer calls, check partial/repeated cache hits,
   output deduplication, version changes, rollback, file recovery, and database reopen.
-- Concurrency tests coordinate simultaneous callers with separate engines and
-  three separate Python processes; successful shared inputs transform once.
+- Concurrency tests cover first-start schema initialization with separate engines
+  and three separate Python processes; successful shared inputs transform once.
 - HTTP integration tests exercise the application lifespan, endpoints, status
   codes, restart persistence, and safe error serialization.
 - CLI tests exercise parsing, stdin/files, output, repeats, help, and failures.

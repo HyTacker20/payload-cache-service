@@ -35,5 +35,13 @@ def create_database(directory: Path) -> Engine:
             "autocommit": sqlite3.LEGACY_TRANSACTION_CONTROL,
         },
     )
-    Base.metadata.create_all(engine)
+    try:
+        with engine.begin() as connection:
+            # Lock before table checks so separate first-start processes cannot
+            # both observe a missing table and race to create it.
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
+            Base.metadata.create_all(connection)
+    except Exception:
+        engine.dispose()
+        raise
     return engine

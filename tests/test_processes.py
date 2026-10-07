@@ -10,8 +10,9 @@ from cache_service.service import PayloadService
 from cache_service.storage import PayloadFiles
 
 
-def create_in_process(directory: str, attempted, release, results) -> None:
+def create_in_process(directory: str, starting, attempted, release, results) -> None:
     root = Path(directory)
+    starting.wait(timeout=10)
     engine = create_database(root)
 
     @event.listens_for(engine, "before_cursor_execute")
@@ -27,6 +28,9 @@ def create_in_process(directory: str, attempted, release, results) -> None:
         return transform(value)
 
     try:
+        # Finish every first-start schema transaction before holding the writer
+        # in the transformer; other processes must be able to finish startup.
+        starting.wait(timeout=10)
         service = PayloadService(
             engine, PayloadFiles(root / "payloads"), counted_transform
         )
@@ -37,14 +41,15 @@ def create_in_process(directory: str, attempted, release, results) -> None:
 
 
 def test_separate_processes_do_not_duplicate_transformations(tmp_path: Path) -> None:
-    create_database(tmp_path).dispose()
     context = multiprocessing.get_context("spawn")
     attempted = context.Queue()
     results = context.Queue()
     release = context.Event()
+    starting = context.Barrier(3)
     processes = [
         context.Process(
-            target=create_in_process, args=(str(tmp_path), attempted, release, results)
+            target=create_in_process,
+            args=(str(tmp_path), starting, attempted, release, results),
         )
         for _ in range(3)
     ]
