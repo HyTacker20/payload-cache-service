@@ -54,8 +54,8 @@ class CliSettings(BaseSettings):
         if self.input_file is not None and self.json_input is not None:
             raise ValueError("--input and --json are mutually exclusive")
         if (
-            self.host.query
-            or self.host.fragment
+            self.host.query is not None
+            or self.host.fragment is not None
             or self.host.username
             or self.host.password
         ):

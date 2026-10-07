@@ -101,6 +101,15 @@ def test_invalid_arguments_fail_before_network(requests, capsys, args) -> None:
     assert requests == []
 
 
+@pytest.mark.parametrize("suffix", ["?", "#", "?query=1", "#fragment", "?/#"])
+def test_host_query_and_fragment_fail_before_network(requests, capsys, suffix) -> None:
+    assert main(["--host", f"http://example.test{suffix}", "-j", REQUEST]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "--host must not contain query, fragment, or credentials" in captured.err
+    assert requests == []
+
+
 def test_missing_input_file(requests, tmp_path: Path, capsys) -> None:
     assert main(["-i", str(tmp_path / "missing.json")]) == 2
     assert "cache-cli:" in capsys.readouterr().err
