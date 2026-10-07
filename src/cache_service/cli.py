@@ -7,15 +7,21 @@ from typing import Self
 
 import httpx
 from pydantic import Field, HttpUrl, ValidationError, model_validator
-from pydantic_settings import BaseSettings, CliApp, SettingsConfigDict, SettingsError
+from pydantic_settings import (
+    BaseSettings,
+    CliApp,
+    CliSettingsSource,
+    SettingsConfigDict,
+    SettingsError,
+)
 
 from cache_service.schemas import PayloadConfirmation, PayloadInput, PayloadOutput
 
 
 class CliSettings(BaseSettings):
     model_config = SettingsConfigDict(
-        case_sensitive=True,
         env_prefix="CACHE_CLI_",
+        env_prefix_target="all",
         cli_prog_name="cache-cli",
         cli_hide_none_type=True,
         cli_shortcuts={
@@ -61,7 +67,10 @@ def read_input(options: CliSettings) -> PayloadInput:
     if options.json_input is not None:
         content = options.json_input
     elif options.input_file is None or options.input_file == "-":
-        content = sys.stdin.read()
+        binary = getattr(sys.stdin, "buffer", None)
+        content = (
+            sys.stdin.read() if binary is None else binary.read().decode("utf-8-sig")
+        )
     else:
         content = Path(options.input_file).read_text(encoding="utf-8-sig")
     return PayloadInput.model_validate_json(content)
@@ -104,9 +113,16 @@ def exercise_service(options: CliSettings, payload: PayloadInput) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     try:
+        source = CliSettingsSource[CliSettings](
+            CliSettings, case_sensitive=True, cli_exit_on_error=False
+        )
+        # These options are raw strings: "null" is JSON or a valid filename.
+        # NUL cannot occur in OS arguments; set it after help defaults are built.
+        source.cli_parse_none_str = "\0"
         options = CliApp.run(
             CliSettings,
             cli_args=None if argv is None else list(argv),
+            cli_settings_source=source,
             cli_exit_on_error=False,
         )
         payload = read_input(options)

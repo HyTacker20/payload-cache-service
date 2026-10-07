@@ -71,6 +71,7 @@ def test_help_does_not_contact_server(requests, capsys, flag) -> None:
         main([flag])
     assert caught.value.code == 0
     output = capsys.readouterr().out
+    assert "\0" not in output
     assert "--host" in output
     assert "--repeat" in output
     assert "--json" in output
@@ -163,3 +164,83 @@ def test_server_failures(monkeypatch, capsys, failure) -> None:
 def test_output_failure(requests, tmp_path: Path, capsys) -> None:
     assert main(["-j", REQUEST, "-o", str(tmp_path)]) == 1
     assert "cache-cli:" in capsys.readouterr().err
+
+
+def test_unrelated_environment_does_not_override_defaults(
+    requests, monkeypatch, tmp_path: Path, capsys
+) -> None:
+    target = tmp_path / "unrelated-output.txt"
+    target.write_text("keep this file", encoding="utf-8")
+    monkeypatch.setenv("input", str(tmp_path / "missing.json"))
+    monkeypatch.setenv("output", str(target))
+    monkeypatch.setenv("json", "invalid unrelated JSON")
+    monkeypatch.setattr("sys.stdin", io.StringIO(REQUEST))
+    assert main([]) == 0
+    assert json.loads(capsys.readouterr().out)["output"] == "FIRST, OTHER"
+    assert target.read_text(encoding="utf-8") == "keep this file"
+
+
+def test_prefixed_environment_and_cli_precedence(requests, monkeypatch, capsys) -> None:
+    monkeypatch.setenv("CACHE_CLI_HOST", "http://example.test/base/")
+    monkeypatch.setenv("CACHE_CLI_REPEAT", "3")
+    monkeypatch.setenv("CACHE_CLI_JSON", REQUEST)
+    assert main(["-r", "2"]) == 0
+    assert len(requests) == 4
+    assert str(requests[0].url) == "http://example.test/base/payload"
+    assert len(capsys.readouterr().out.splitlines()) == 2
+
+
+def test_prefixed_file_options(requests, monkeypatch, tmp_path: Path, capsys) -> None:
+    source = tmp_path / "request.json"
+    target = tmp_path / "result.jsonl"
+    source.write_text(REQUEST, encoding="utf-8")
+    monkeypatch.setenv("CACHE_CLI_INPUT", str(source))
+    monkeypatch.setenv("CACHE_CLI_OUTPUT", str(target))
+    assert main([]) == 0
+    assert json.loads(target.read_text(encoding="utf-8"))["output"] == "FIRST, OTHER"
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize("bom", [b"", b"\xef\xbb\xbf"])
+def test_redirected_stdin_uses_utf8_independently_of_locale(
+    requests, monkeypatch, bom
+) -> None:
+    data = {"list_1": ["Привіт"], "list_2": ["straße"]}
+    stream = io.TextIOWrapper(
+        io.BytesIO(bom + json.dumps(data, ensure_ascii=False).encode("utf-8")),
+        encoding="cp1251",
+    )
+    monkeypatch.setattr("sys.stdin", stream)
+    assert main([]) == 0
+    assert json.loads(requests[0].content) == data
+
+
+def test_literal_json_null_does_not_fall_back_to_stdin(
+    requests, monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr("sys.stdin", io.StringIO(REQUEST))
+    assert main(["--json", "null"]) == 2
+    assert "cache-cli:" in capsys.readouterr().err
+    assert requests == []
+
+
+def test_literal_json_null_does_not_bypass_exclusive_inputs(
+    requests, monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr("sys.stdin", io.StringIO(REQUEST))
+    assert main(["--json", "null", "--input", "-"]) == 2
+    assert "mutually exclusive" in capsys.readouterr().err
+    assert requests == []
+
+
+@pytest.mark.parametrize("filename", ["null", "None"])
+def test_literal_null_filenames_are_preserved(
+    requests, monkeypatch, tmp_path: Path, filename
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    Path(filename).write_text(REQUEST, encoding="utf-8")
+    assert main(["-i", filename, "-o", filename]) == 0
+    assert (
+        json.loads(Path(filename).read_text(encoding="utf-8"))["output"]
+        == "FIRST, OTHER"
+    )
