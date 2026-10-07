@@ -143,9 +143,17 @@ docker compose exec api cache-cli --json '{"list_1":["first"],"list_2":["other"]
 ```
 
 Defaults: `http://127.0.0.1:8000`, one iteration, stdin input, stdout output.
-Input files accept UTF-8 with or without a BOM. Input is fully validated before
-contacting the server. HTTP(S) base URLs may include a path prefix, but not
+Files and redirected stdin accept UTF-8 with or without a BOM, independently of
+the operating system's locale. Input is fully validated before contacting the
+server. Literal `--json null` is rejected; filenames named `null` or `None` are
+preserved. HTTP(S) base URLs may include a path prefix, but not
 credentials, a query, or a fragment. Network operations have a 30-second timeout.
+
+CLI defaults can also be configured with `CACHE_CLI_HOST`, `CACHE_CLI_REPEAT`,
+`CACHE_CLI_INPUT`, `CACHE_CLI_JSON`, and `CACHE_CLI_OUTPUT`. Command-line arguments
+take precedence. Environment variable names are case-insensitive; unrelated
+variables named `input`, `json`, or `output` do not configure this application.
+CLI flags remain case-sensitive so `-H` and `-h` retain distinct meanings.
 
 Each iteration performs POST followed by GET. Output is JSON Lines, suitable for
 programmatic consumption:
@@ -201,11 +209,17 @@ contract; `generation.py` contains the transformer and interleaving;
   after file replacement but before DB commit can leave an orphan file. It cannot
   be served without a committed row; a later POST can reuse the file safely.
   Committed database output can regenerate missing files after storage failures.
+- On Windows, concurrent readers can temporarily block file replacement. Repairs
+  recheck whether another caller already wrote the same content, or retry a
+  sharing violation up to ten times with 10 ms between attempts. Persistent
+  storage failures still return 503.
 - Transformer or file failures roll back newly inserted rows. Retrying a failed
   request may repeat computations from its rolled-back transaction. Existing
   committed cached results remain available.
 - Identity follows the returned output string, including delimiters. Different
   element boundaries that produce the same string intentionally share an ID.
+- Validation responses include error type, location, and message without
+  reflecting rejected values. Database error logging hides bound SQL parameters.
 - Schema creation uses SQLAlchemy `create_all` for this initial schema. Future
   schema changes would need migrations. No cache expiry or background cleanup is
   implemented; data grows with distinct strings and outputs.
@@ -230,6 +244,9 @@ transformer and remote HTTP responses are replaced where necessary.
 - HTTP integration tests exercise the application lifespan, endpoints, status
   codes, restart persistence, and safe error serialization.
 - CLI tests exercise parsing, stdin/files, output, repeats, help, and failures.
+- Regression tests cover binary/non-finite error inputs, parameter privacy,
+  concurrent Windows file recovery, CLI environment isolation, literal arguments,
+  and UTF-8 stdin under a non-UTF-8 locale.
 
 CI runs tests, formatting, lint, and strict type checking on Linux and Windows,
 and builds the Docker image. For submission preparation, see
